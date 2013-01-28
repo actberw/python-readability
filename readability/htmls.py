@@ -1,6 +1,7 @@
 from cleaners import normalize_spaces, clean_attributes
 from encoding import get_encoding
 from lxml.html import tostring
+from lxml.etree import tounicode
 import logging
 import lxml.html
 import re
@@ -51,7 +52,7 @@ def get_title(doc):
 
 def add_match(collection, text, orig):
     text = norm_title(text)
-    if len(text.split()) >= 2 and len(text) >= 15:
+    if len(text) >= 5:
         if text.replace('"', '') in orig.replace('"', ''):
             collection.add(text)
 
@@ -61,46 +62,39 @@ def shorten_title(doc):
         return ''
 
     title = orig = norm_title(title.text)
-
-    candidates = set()
+    candidates = set() 
 
     for item in ['.//h1', './/h2', './/h3']:
         for e in list(doc.iterfind(item)):
-            if e.text:
-                add_match(candidates, e.text, orig)
-            if e.text_content():
-                add_match(candidates, e.text_content(), orig)
-
+            text = e.text or e.text_content()
+            add_match(candidates, text, orig)
     for item in ['#title', '#head', '#heading', '.pageTitle', '.news_title', '.title', '.head', '.heading', '.contentheading', '.small_header_red']:
         for e in doc.cssselect(item):
-            if e.text:
-                add_match(candidates, e.text, orig)
-            if e.text_content():
-                add_match(candidates, e.text_content(), orig)
-
+            text = e.text or e.text_content()
+            add_match(candidates, text, orig)
     if candidates:
         title = sorted(candidates, key=len)[-1]
+    #else:
+    for delimiter in ['|', '-', ' :: ', ' / ', '_', " "]:
+        if delimiter in title:
+            parts = orig.split(delimiter)
+            title = parts[0]
+            #if len(parts[0].split()) >= 4:
+            #    title = parts[0]
+            #    break
+            #elif len(parts[-1].split()) >= 4:
+            #    title = parts[-1]
+            #    break
     else:
-        for delimiter in [' | ', ' - ', ' :: ', ' / ']:
-            if delimiter in title:
-                parts = orig.split(delimiter)
-                if len(parts[0].split()) >= 4:
-                    title = parts[0]
-                    break
-                elif len(parts[-1].split()) >= 4:
-                    title = parts[-1]
-                    break
-        else:
-            if ': ' in title:
-                parts = orig.split(': ')
-                if len(parts[-1].split()) >= 4:
-                    title = parts[-1]
-                else:
-                    title = orig.split(': ', 1)[1]
+        if ': ' in title:
+            parts = orig.split(': ')
+            if len(parts[-1].split()) >= 4:
+                title = parts[-1]
+            else:
+                title = orig.split(': ', 1)[1]
 
-    if not 15 < len(title) < 150:
+    if not 5 < len(title) < 150:
         return orig
-
     return title
 
 def get_body(doc):

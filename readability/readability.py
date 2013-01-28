@@ -1,7 +1,9 @@
 #!/usr/bin/env python
-import logging
+#coding=utf-8
 import re
 import sys
+import copy
+import logging
 
 from collections import defaultdict
 from lxml.etree import tostring
@@ -9,17 +11,24 @@ from lxml.etree import tounicode
 from lxml.html import document_fromstring
 from lxml.html import fragment_fromstring
 
-from cleaners import clean_attributes
-from cleaners import html_cleaner
 from htmls import build_doc
 from htmls import get_body
 from htmls import get_title
 from htmls import shorten_title
+from encoding import get_encoding
+from cleaners import html_cleaner
+from cleaners import clean_attributes
 
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger()
 
+DATE_REGEX = (
+        re.compile(u'(?P<year>\\d{4})(年|:|-|\/)(?P<month>\\d{1,2})(月|:|-|\/)(?P<day>\\d{1,2}).*?(?P<hour>\\d{1,2})(时|:)(?P<minute>\\d{1,2})(分|:)(?P<second>\\d{1,2})', 
+            re.UNICODE), 
+        re.compile(u'(?P<year>\\d{4})(年|:|-|\/)(?P<month>\\d{1,2})(月|:|-|\/)(?P<day>\\d{1,2}).*?(?P<hour>\\d{1,2})(时|:)(?P<minute>\\d{1,2})', re.UNICODE),
+        re.compile(u'(?P<year>\\d{4})(年|:|-|\/)(?P<month>\\d{1,2})(月|:|-|\/)(?P<day>\\d{1,2})', re.UNICODE),
+        )
 
 REGEXES = {
     'unlikelyCandidatesRe': re.compile('combx|comment|community|disqus|extra|foot|header|menu|remark|rss|shoutbox|sidebar|sponsor|ad-break|agegate|pagination|pager|popup|tweet|twitter', re.I),
@@ -27,6 +36,11 @@ REGEXES = {
     'positiveRe': re.compile('article|body|content|entry|hentry|main|page|pagination|post|text|blog|story', re.I),
     'negativeRe': re.compile('combx|comment|com-|contact|foot|footer|footnote|masthead|media|meta|outbrain|promo|related|scroll|shoutbox|sidebar|sponsor|shopping|tags|tool|widget', re.I),
     'divToPElementsRe': re.compile('<(a|blockquote|dl|div|img|ol|p|pre|table|ul)', re.I),
+    'dateRe': re.compile('time|date'),
+    'dateAttrScoreRe': re.compile('post|article|pub|art'),
+    'dateTextScoreRe': re.compile(u'发表|post|时间'),
+    'authorRe': re.compile('author|auth|editor|user|owner|nick'),
+    'authorTextRe': re.compile(u'(作者:|作者：|楼主：)(?P<author>.*)\s')
     #'replaceBrsRe': re.compile('(<br[^>]*>[ \n\r\t]*){2,}',re.I),
     #'replaceFontsRe': re.compile('<(\/?)font[^>]*>',re.I),
     #'trimRe': re.compile('^\s+|\s+$/'),
@@ -95,14 +109,89 @@ class Document:
             - url: will allow adjusting links to be absolute
 
         """
-        self.input = input
+        if isinstance(input, unicode):
+            self.input = input
+        else:
+            enc = get_encoding(input)
+            self.input = input.decode(enc, u'ignore')
+
         self.options = options
         self.html = None
+        self.post_title = None
+        self.pub_date = None
+        self.author = None
+        self.trans_html = None 
+        self.trans_flag = False
 
     def _html(self, force=False):
         if force or self.html is None:
             self.html = self._parse(self.input)
         return self.html
+
+    def get_publish_date(self):
+        if self.pub_date is None:
+            html = self._html()
+            candidates = []
+            for elem in self.tags(html, 'span', 'em', 'p', 'li', 'a', 'td', 'i', 'font', 'div'):
+                text = elem.text
+                if not text or len(text) > 50:
+                    continue
+                #print elem.tag, text.encode('utf-8')
+                score = 0
+                text += elem.get('title', '') + elem.get('data-field', '')
+                for regex in DATE_REGEX:
+                    match = regex.search(text)
+                    if match:
+                        attribute_text = '%s %s' % (elem.get('id', ''), elem.get('class', ''))
+                        if len(attribute_text) > 1:
+                            if REGEXES['dateRe'].search(attribute_text):
+                                score += 20
+                            if REGEXES['dateAttrScoreRe'].search(attribute_text):
+                                score += 10
+                            if REGEXES['dateTextScoreRe'].search(text) or REGEXES['dateTextScoreRe'].search(elem.getparent().text_content()):
+                                score += 100
+                        if len(candidates) <= 0:
+                            score = 5 
+                        candidate = {'result': match.groupdict(), 'score': score}
+                        candidates.append(candidate)
+                        break
+
+                if score > 25:
+                    break
+            candidates = sorted(candidates, key=lambda x: x['score'], reverse=True)
+            self.pub_date = candidates[0]['result'] if candidates else {}
+        return self.pub_date
+
+    def get_author(self):
+        if self.author is None:
+            html = self._html()
+            candidates = []
+            for elem in self.tags(html, 'span', 'em', 'strong', 'p', 'li', 'a', 'td', 'div'):
+                text = elem.text and elem.text.strip()
+                if not text or len(text) > 50 or len(text) < 2:
+                    continue
+                score = 0
+                match = REGEXES['authorTextRe'].search(text) or REGEXES['authorTextRe'].search(elem.getparent().text_content())
+                if match:
+                    return match.group('author')
+                attribute_text = '%s %s' % (elem.get('id', ''), elem.get('class', ''))
+                if len(attribute_text) > 1:
+                    score = 0
+                    match = REGEXES['authorRe'].search(attribute_text)
+                    if match:
+                        #print elem.tag, text.encode('utf-8'), attribute_text
+                        score += 10
+                        if 'nick' in attribute_text or 'name' in attribute_text:
+                            score += 5
+                        if not len(candidates):
+                            score += 3
+                        score += 2.0/len(text)
+                        candidates.append({'txt': text, 'score': score})
+            
+            candidates = sorted(candidates, key=lambda x: x['score'], reverse=True)
+            self.author = candidates[0]['txt'] if candidates else u""
+
+        return self.author 
 
     def _parse(self, input):
         doc = build_doc(input)
@@ -115,37 +204,32 @@ class Document:
         return doc
 
     def content(self):
-        return get_body(self._html(True))
+        return get_body(self._html())
 
     def title(self):
-        return get_title(self._html(True))
+        return get_title(self._html())
 
     def short_title(self):
-        return shorten_title(self._html(True))
+        return shorten_title(self._html())
 
-    def get_clean_html(self):
-         return clean_attributes(tounicode(self.html))
+    def text_content(self):
+        if not self.trans_flag:
+            self.transform()
+        return self.trans_html.text_content() if self.trans_html is not None else u""
 
-    def summary(self, html_partial=False):
-        """Generate the summary of the html docuemnt
-
-        :param html_partial: return only the div of the document, don't wrap
-        in html and body tags.
-
-        """
+    def transform(self, html_partial=False):
         try:
             ruthless = True
             while True:
-                self._html(True)
-                for i in self.tags(self.html, 'script', 'style'):
+                html = copy.deepcopy(self._html())
+                for i in self.tags(html, 'script', 'style'):
                     i.drop_tree()
-                for i in self.tags(self.html, 'body'):
+                for i in self.tags(html, 'body'):
                     i.set('id', 'readabilityBody')
                 if ruthless:
-                    self.remove_unlikely_candidates()
-                self.transform_misused_divs_into_paragraphs()
-                candidates = self.score_paragraphs()
-
+                    html = self.remove_unlikely_candidates(html)
+                html = self.transform_misused_divs_into_paragraphs(html)
+                candidates = self.score_paragraphs(html)
                 best_candidate = self.select_best_candidate(candidates)
 
                 if best_candidate:
@@ -164,10 +248,11 @@ class Document:
                         log.debug(
                             ("Ruthless and lenient parsing did not work. "
                              "Returning raw html"))
-                        article = self.html.find('body')
+                        article = html.find('body')
                         if article is None:
-                            article = self.html
-                cleaned_article = self.sanitize(article, candidates)
+                            article = html
+                html = self.sanitize(article, candidates)
+                cleaned_article = self.get_clean_html(html)
                 article_length = len(cleaned_article or '')
                 retry_length = self.options.get(
                     'retry_length',
@@ -178,10 +263,27 @@ class Document:
                     # Loop through and try again.
                     continue
                 else:
-                    return cleaned_article
+                    self.trans_flag = True
+                    self.trans_html = html
+                    return self.trans_html 
         except StandardError, e:
             log.exception('error getting summary: ')
             raise Unparseable(str(e)), None, sys.exc_info()[2]
+
+
+    def get_clean_html(self, html):
+         return clean_attributes(tounicode(html))
+
+    def summary(self, html_partial=False):
+        """Generate the summary of the html docuemnt
+
+        :param html_partial: return only the div of the document, don't wrap
+        in html and body tags.
+
+        """
+        if not self.trans_flag:
+            self.transform()
+        return self.get_clean_html(self.trans_html)
 
     def get_article(self, candidates, best_candidate, html_partial=False):
         # Now that we have the top candidate, look through its siblings for
@@ -253,13 +355,15 @@ class Document:
         total_length = text_length(elem)
         return float(link_length) / max(total_length, 1)
 
-    def score_paragraphs(self, ):
+    def score_paragraphs(self, html):
+        if html is None:
+            html = self._html()
         MIN_LEN = self.options.get(
             'min_text_length',
             self.TEXT_LENGTH_THRESHOLD)
         candidates = {}
         ordered = []
-        for elem in self.tags(self._html(), "p", "pre", "td"):
+        for elem in self.tags(html, "p", "pre", "td"):
             parent_node = elem.getparent()
             if parent_node is None:
                 continue
@@ -347,8 +451,10 @@ class Document:
         if self.options.get('debug', False):
             log.debug(*a)
 
-    def remove_unlikely_candidates(self):
-        for elem in self.html.iter():
+    def remove_unlikely_candidates(self, html):
+        if html is None:
+            html = self._html()
+        for elem in html.iter():
             s = "%s %s" % (elem.get('class', ''), elem.get('id', ''))
             if len(s) < 2:
                 continue
@@ -356,9 +462,12 @@ class Document:
             if REGEXES['unlikelyCandidatesRe'].search(s) and (not REGEXES['okMaybeItsACandidateRe'].search(s)) and elem.tag not in ['html', 'body']:
                 self.debug("Removing unlikely candidate - %s" % describe(elem))
                 elem.drop_tree()
+        return html
 
-    def transform_misused_divs_into_paragraphs(self):
-        for elem in self.tags(self.html, 'div'):
+    def transform_misused_divs_into_paragraphs(self, html):
+        if html is None:
+            html = self._html() 
+        for elem in self.tags(html, 'div'):
             # transform <div>s that do not contain other block elements into
             # <p>s
             #FIXME: The current implementation ignores all descendants that
@@ -371,7 +480,7 @@ class Document:
                 elem.tag = "p"
                 #print "Fixed element "+describe(elem)
 
-        for elem in self.tags(self.html, 'div'):
+        for elem in self.tags(html, 'div'):
             if elem.text and elem.text.strip():
                 p = fragment_fromstring('<p/>')
                 p.text = elem.text
@@ -389,6 +498,7 @@ class Document:
                 if child.tag == 'br':
                     #print 'Dropped <br> at '+describe(elem)
                     child.drop_tree()
+        return html
 
     def tags(self, node, *tag_names):
         for tag_name in tag_names:
@@ -452,10 +562,10 @@ class Document:
 
                 #if el.tag == 'div' and counts["img"] >= 1:
                 #    continue
-                if counts["p"] and counts["img"] > counts["p"]:
-                    reason = "too many images (%s)" % counts["img"]
-                    to_remove = True
-                elif counts["li"] > counts["p"] and tag != "ul" and tag != "ol":
+                #if counts["p"] and counts["img"] > counts["p"]:
+                #    reason = "too many images (%s)" % counts["img"]
+                #    to_remove = True
+                if counts["li"] > counts["p"] and tag != "ul" and tag != "ol":
                     reason = "more <li>s than <p>s"
                     to_remove = True
                 elif counts["input"] > (counts["p"] / 3):
@@ -532,9 +642,9 @@ class Document:
             if not self.options.get('attributes', None):
                 #el.attrib = {} #FIXME:Checkout the effects of disabling this
                 pass
-
-        self.html = node
-        return self.get_clean_html()
+        return node
+        #self.trans_html = node
+        #return self.get_clean_html(self.trans_html)
 
 
 class HashableElement():
@@ -589,5 +699,12 @@ def main():
     finally:
         file.close()
 
+def search(date_str):
+    for regex in DATE_REGEX:
+        match = regex.search(date_str)
+        if match:
+            print match.groupdict()
+
 if __name__ == '__main__':
-    main()
+    #main()
+    search(u'2013-01-26 15:32')
