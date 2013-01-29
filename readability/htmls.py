@@ -107,3 +107,28 @@ def get_body(doc):
     except Exception: #FIXME find the equivalent lxml error
         logging.error("cleansing broke html content: %s\n---------\n%s" % (raw_html, cleaned))
         return raw_html
+
+
+
+
+
+
+
+def remove_ctrl_char(origin_str):
+    #ctr_chars = [u'\x%02d' % i for i in range(0, 32)]
+    ctr_chars = [u'\u0000', u'\u0001', u'\u0002', u'\u0003', u'\u0004', u'\u0005', u'\u0006', u'\u0007', u'\u0008', u'\u0009',
+                 u'\u000a', u'\u000b', u'\u000c', u'\u000d', u'\u000e', u'\u000f', u'\u0010', u'\u0011', u'\u0012', u'\u0013',
+                 u'\u0014', u'\u0015', u'\u0016', u'\u0017', u'\u0018', u'\u0019', u'\u001a', u'\u001b', u'\u001c', u'\u001d',
+                 u'\u001e', u'\u001f']
+    if not isinstance(origin_str, unicode):
+        origin_str = unicode(origin_str)
+
+    regex = re.compile(u'|'.join(ctr_chars))
+    return regex.subn(u'', origin_str)[0]
+
+
+def merge_space(origin_str):
+    if not isinstance(origin_str, unicode):
+        origin_str = unicode(origin_str)
+    regex = re.compile(u"(\s)+", re.UNICODE)
+    return regex.subn(u'\\1', origin_str)[0]

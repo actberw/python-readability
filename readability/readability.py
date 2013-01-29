@@ -15,6 +15,7 @@ from htmls import build_doc
 from htmls import get_body
 from htmls import get_title
 from htmls import shorten_title
+from htmls import merge_space 
 from encoding import get_encoding
 from cleaners import html_cleaner
 from cleaners import clean_attributes
@@ -114,7 +115,7 @@ class Document:
         else:
             enc = get_encoding(input)
             self.input = input.decode(enc, u'ignore')
-
+        self.input = merge_space(self.input)
         self.options = options
         self.html = None
         self.post_title = None
@@ -134,9 +135,8 @@ class Document:
             candidates = []
             for elem in self.tags(html, 'span', 'em', 'p', 'li', 'a', 'td', 'i', 'font', 'div'):
                 text = elem.text
-                if not text or len(text) > 50:
+                if not text or len(text) < 8 or len(text) > 50:
                     continue
-                #print elem.tag, text.encode('utf-8')
                 score = 0
                 text += elem.get('title', '') + elem.get('data-field', '')
                 for regex in DATE_REGEX:
