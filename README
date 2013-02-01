@@ -17,18 +17,17 @@ Based on:
  - Github users contributions.
 
 Installation::
-
-    easy_install readability-lxml
-    or
-    pip install readability-lxml
-
+   -download code 
+   -python setup.py install
 Usage::
 
     from readability.readability import Document
     import urllib
     html = urllib.urlopen(url).read()
-    readable_article = Document(html).summary()
-    readable_title = Document(html).short_title()
+    doc = Document(html)
+    short_title = doc.short_title()
+    text_content = doc.text_content()
+    pub_date = doc.get_publish_date()
 
 Command-line usage::
 

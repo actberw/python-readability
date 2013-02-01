@@ -4,6 +4,7 @@ import re
 import sys
 import copy
 import logging
+import datetime
 
 from collections import defaultdict
 from lxml.etree import tostring
@@ -159,7 +160,13 @@ class Document:
                 if score > 25:
                     break
             candidates = sorted(candidates, key=lambda x: x['score'], reverse=True)
-            self.pub_date = candidates[0]['result'] if candidates else {}
+            date_kwargs = candidates[0]['result'] if candidates else {}
+            if date_kwargs:
+                for key, value in date_kwargs.items():
+                    date_kwargs[key] = int(value)
+                self.pub_date = datetime.datetime(**date_kwargs)
+            else:
+                self.pub_date = datetime.datetime.now()
         return self.pub_date
 
     def get_author(self):
