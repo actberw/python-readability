@@ -119,9 +119,9 @@ class Document:
         self.input = merge_space(self.input)
         self.options = options
         self.html = None
-        self.post_title = None
-        self.pub_date = None
-        self.author = None
+        #self.post_title = None
+        #self.pub_date = None
+        #self.author = None
         self.trans_html = None 
         self.trans_flag = False
 
@@ -131,7 +131,7 @@ class Document:
         return self.html
 
     def get_publish_date(self):
-        if self.pub_date is None:
+        if not hasattr(self, "pub_date"):
             html = self._html()
             candidates = []
             for elem in self.tags(html, 'span', 'em', 'p', 'li', 'a', 'td', 'i', 'font', 'div'):
@@ -166,11 +166,11 @@ class Document:
                     date_kwargs[key] = int(value)
                 self.pub_date = datetime.datetime(**date_kwargs)
             else:
-                self.pub_date = datetime.datetime.now()
+                self.pub_date = None 
         return self.pub_date
 
     def get_author(self):
-        if self.author is None:
+        if not hasattr(self, 'author'):
             html = self._html()
             candidates = []
             for elem in self.tags(html, 'span', 'em', 'strong', 'p', 'li', 'a', 'td', 'div'):
@@ -217,7 +217,10 @@ class Document:
         return get_title(self._html())
 
     def short_title(self):
-        return shorten_title(self._html())
+        if not hasattr(self, 'post_title'):
+            self.post_title = shorten_title(self._html())
+
+        return self.post_title
 
     def text_content(self):
         if not self.trans_flag:
